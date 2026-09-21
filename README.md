@@ -66,9 +66,9 @@ Logistic Regression and XGBoost stacking methods were also evaluated, but they d
 
 When the final prediction is a tumor class, localization functions embedded directly inside `app.py` perform a separate grayscale image analysis. The analysis uses visual properties such as intensity, local contrast, texture, edges, symmetry, component shape, and distance from the skull boundary to identify and rank up to three suspicious candidate regions.
 
-- 🔴 **Red box:** first-ranked candidate
-- 🟠 **Orange box:** second-ranked candidate
-- 🟡 **Yellow box:** third-ranked candidate
+-  **Red box:** first-ranked candidate
+-  **Orange box:** second-ranked candidate
+-  **Yellow box:** third-ranked candidate
 
 When `notumor` is predicted, candidate-region detection is skipped and no boxes are displayed.
 
