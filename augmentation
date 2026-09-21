@@ -1,0 +1,217 @@
+import os
+import random
+import shutil
+from pathlib import Path
+from PIL import Image, ImageEnhance
+from google.colab import drive
+
+# =========================
+# 1) MOUNT GOOGLE DRIVE
+# =========================
+drive.mount('/content/drive')
+
+# =========================
+# 2) PATHS
+# =========================
+source_root = "/content/drive/MyDrive/Final Project/MRI_images_selected"
+target_root = "/content/drive/MyDrive/Final Project/MRI_images_balanced_1400"
+
+classes = ["glioma", "meningioma", "pituitary", "notumor"]
+target_count = 1400
+
+# If True, glioma will be reduced to exactly 1400
+# If False, glioma will stay as it is if already above 1400
+limit_glioma_to_1400 = False
+
+valid_ext = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+
+# =========================
+# 3) AUGMENTATION MAP
+# =========================
+aug_map = {
+    "flip_lr": "fl",
+    "flip_ud": "fu",
+    "rotate": "r",
+    "zoom": "z",
+    "shift": "s",
+    "brightness": "b"
+}
+
+# =========================
+# 4) CREATE TARGET FOLDERS
+# =========================
+os.makedirs(target_root, exist_ok=True)
+for cls in classes:
+    os.makedirs(os.path.join(target_root, cls), exist_ok=True)
+
+# =========================
+# 5) HELPER FUNCTIONS
+# =========================
+def list_images(folder):
+    return sorted([
+        f for f in os.listdir(folder)
+        if Path(f).suffix.lower() in valid_ext
+    ])
+
+def open_image(path):
+    return Image.open(path).convert("RGB")
+
+def copy_originals(src_folder, dst_folder):
+    for fname in list_images(src_folder):
+        src_path = os.path.join(src_folder, fname)
+        dst_path = os.path.join(dst_folder, fname)
+        if not os.path.exists(dst_path):
+            shutil.copy2(src_path, dst_path)
+
+def get_unique_name(dst_folder, original_name, aug_code):
+    stem = Path(original_name).stem
+    suffix = Path(original_name).suffix
+
+    new_name = f"{stem}_{aug_code}{suffix}"
+    save_path = os.path.join(dst_folder, new_name)
+
+    counter = 1
+    while os.path.exists(save_path):
+        new_name = f"{stem}_{aug_code}{counter}{suffix}"
+        save_path = os.path.join(dst_folder, new_name)
+        counter += 1
+
+    return save_path
+
+# =========================
+# 6) AUGMENTATION OPERATIONS
+# =========================
+def flip_lr(img):
+    return img.transpose(Image.FLIP_LEFT_RIGHT)
+
+def flip_ud(img):
+    return img.transpose(Image.FLIP_TOP_BOTTOM)
+
+def rotate_img(img):
+    # mild rotation for MRI
+    angle = random.uniform(-10, 10)
+    return img.rotate(angle, resample=Image.BICUBIC)
+
+def zoom_img(img):
+    """
+    Mild zoom-in only.
+    Crop center and resize back to original size.
+    """
+    w, h = img.size
+    zoom_factor = random.uniform(1.05, 1.15)
+
+    new_w = int(w / zoom_factor)
+    new_h = int(h / zoom_factor)
+
+    left = (w - new_w) // 2
+    top = (h - new_h) // 2
+    right = left + new_w
+    bottom = top + new_h
+
+    cropped = img.crop((left, top, right, bottom))
+    return cropped.resize((w, h), Image.BICUBIC)
+
+def shift_img(img):
+    """
+    Width and height shifting.
+    Shift image by up to 8% in each direction.
+    Empty areas are filled with black.
+    """
+    w, h = img.size
+    max_dx = int(0.08 * w)
+    max_dy = int(0.08 * h)
+
+    dx = random.randint(-max_dx, max_dx)
+    dy = random.randint(-max_dy, max_dy)
+
+    return img.transform(
+        (w, h),
+        Image.AFFINE,
+        (1, 0, dx, 0, 1, dy),
+        resample=Image.BICUBIC,
+        fillcolor=(0, 0, 0)
+    )
+
+def brightness_img(img):
+    factor = random.uniform(0.9, 1.1)
+    return ImageEnhance.Brightness(img).enhance(factor)
+
+def augment_image(img, aug_type):
+    if aug_type == "flip_lr":
+        return flip_lr(img)
+
+    elif aug_type == "flip_ud":
+        return flip_ud(img)
+
+    elif aug_type == "rotate":
+        return rotate_img(img)
+
+    elif aug_type == "zoom":
+        return zoom_img(img)
+
+    elif aug_type == "shift":
+        return shift_img(img)
+
+    elif aug_type == "brightness":
+        return brightness_img(img)
+
+    return img
+
+# =========================
+# 7) COPY ORIGINAL IMAGES
+# =========================
+print("Copying original images...")
+for cls in classes:
+    src_folder = os.path.join(source_root, cls)
+    dst_folder = os.path.join(target_root, cls)
+    copy_originals(src_folder, dst_folder)
+# =========================
+# 9) ROUND-BY-ROUND AUGMENTATION
+# =========================
+print("\nStarting augmentation...")
+
+for cls in classes:
+    dst_folder = os.path.join(target_root, cls)
+    src_folder = os.path.join(source_root, cls)
+
+    current_count = len(list_images(dst_folder))
+    if current_count >= target_count:
+        print(f"{cls}: no augmentation needed ({current_count})")
+        continue
+
+    original_files = list_images(src_folder)
+    needed = target_count - current_count
+    print(f"{cls}: need {needed} augmented images")
+
+    while len(list_images(dst_folder)) < target_count:
+        shuffled_files = original_files[:]
+        random.shuffle(shuffled_files)
+
+        for image_name in shuffled_files:
+            if len(list_images(dst_folder)) >= target_count:
+                break
+
+            # one augmentation only for this image in this round
+            aug_type = random.choice(list(aug_map.keys()))
+            aug_code = aug_map[aug_type]
+
+            img_path = os.path.join(src_folder, image_name)
+            img = open_image(img_path)
+
+            aug_img = augment_image(img, aug_type)
+
+            save_path = get_unique_name(dst_folder, image_name, aug_code)
+            aug_img.save(save_path, quality=95)
+
+    print(f"{cls}: completed")
+
+# =========================
+# 10) FINAL COUNTS
+# =========================
+print("\nFinal counts:")
+for cls in classes:
+    count = len(list_images(os.path.join(target_root, cls)))
+    print(f"{cls}: {count}")
+
+print("\nBalanced dataset saved in:")
+print(target_root)
